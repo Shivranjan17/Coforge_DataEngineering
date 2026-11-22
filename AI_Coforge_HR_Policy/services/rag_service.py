@@ -1,0 +1,68 @@
+from langchain_openai import AzureChatOpenAI
+from langchain_community.vectorstores import FAISS
+from config.settings import (AZURE_OPENAI_API_KEY,AZURE_OPENAI_API_VERSION,AZURE_OPENAI_DEPLOYMENT,AZURE_OPENAI_ENDPOINT)
+
+from services.ingestion_service import (get_embeddings,VECTOR_PATH)
+from prompts.rag_prompt import (SYSTEM_PROMPT,HUMAN_PROMPT)
+
+llm=AzureChatOpenAI(
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_key=AZURE_OPENAI_API_KEY,
+    api_version=AZURE_OPENAI_API_VERSION,
+    azure_deployment=AZURE_OPENAI_DEPLOYMENT
+)
+
+def ask_hr_policy(question:str):
+    embeddings=get_embeddings()
+
+
+    #Load only the trusted index created by this app
+    vector_store=FAISS.load_local(
+        str(VECTOR_PATH),
+        embeddings,
+        allow_dangerous_deserialization=True
+    )
+
+
+    #Retrive relevant documents
+    retriever=vector_store.as_retriever(
+        search_kwargs={"k":3}
+    )
+    documents=retriever.invoke(question)
+
+    if not documents:
+        return{
+            "question":question,
+            "answer":"Information is not available in the HR policy.",
+            "sources":[]
+        }
+
+
+    # Build context
+    context = "\n\n".join(
+        doc.page_content for doc in documents
+    )
+ 
+    user_prompt = HUMAN_PROMPT.format(
+        context=context,
+        question=question
+    )
+ 
+    # invoke LLM
+    response = llm.invoke([
+        ("system", SYSTEM_PROMPT),
+        ("human", user_prompt)
+    ])
+ 
+    sources = list({
+        doc.metadata.get("source", "Unknown")
+        for doc in documents
+    })
+ 
+    return {
+        "question": question,
+        "answer": response.content,
+        "sources": sources
+    }
+ 
+ 
